@@ -207,3 +207,5 @@ target_sources(HiveWE_lib PRIVATE
 	"render/vulkan_test_modes.cpp"
 	"render/vulkan_test_modes.h"
 )
+
+add_subdirectory(api)

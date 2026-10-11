@@ -3,6 +3,7 @@ export module GameCameras;
 import std;
 import types;
 import BinaryReader;
+import BinaryWriter;
 import Hierarchy;
 
 export struct GameCamera {
@@ -17,15 +18,15 @@ export struct GameCamera {
 	f32 far_z;
 	f32 near_z;
 
-	f32 local_pitch;
-	f32 local_yaw;
-	f32 local_roll;
+	f32 local_pitch = 0.f;
+	f32 local_yaw = 0.f;
+	f32 local_roll = 0.f;
 
-	f32 dof_distance;
-	f32 dof_scale;
-	f32 pos_absolute_z;
+	f32 dof_distance = 0.f;
+	f32 dof_scale = 0.f;
+	f32 pos_absolute_z = 0.f;
 	std::string name;
-	u32 free_camera;
+	u32 free_camera = 0;
 };
 
 export class GameCameras {
@@ -75,7 +76,35 @@ export class GameCameras {
 		}
 	}
 
-	void save() {}
+	static constexpr u32 write_version = 3;
+
+	/// Writes war3map.w3c, the inverse of load()
+	void save(const f32 terrain_offset_x, const f32 terrain_offset_y) const {
+		BinaryWriter writer;
+		writer.write<u32>(write_version);
+		writer.write<u32>(static_cast<u32>(cameras.size()));
+		for (const auto& i : cameras) {
+			writer.write<f32>(i.target_x * 128.f + terrain_offset_x);
+			writer.write<f32>(i.target_y * 128.f + terrain_offset_y);
+			writer.write<f32>(i.z_offset * 128.f);
+			writer.write<f32>(i.rotation);
+			writer.write<f32>(i.angle_of_attack);
+			writer.write<f32>(i.distance);
+			writer.write<f32>(i.roll);
+			writer.write<f32>(i.fov);
+			writer.write<f32>(i.far_z);
+			writer.write<f32>(i.near_z);
+			writer.write<f32>(i.local_pitch);
+			writer.write<f32>(i.local_yaw);
+			writer.write<f32>(i.local_roll);
+			writer.write<f32>(i.dof_distance);
+			writer.write<f32>(i.dof_scale);
+			writer.write<f32>(i.pos_absolute_z);
+			writer.write_c_string(i.name);
+			writer.write<u32>(i.free_camera);
+		}
+		hierarchy.map_file_write("war3map.w3c", writer.buffer);
+	}
 
 	void remove_camera(GameCamera* camera) {
 		const auto iterator = cameras.begin() + std::distance(cameras.data(), camera);

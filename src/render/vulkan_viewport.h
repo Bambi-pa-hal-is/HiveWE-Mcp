@@ -44,6 +44,10 @@ class VulkanViewport : public QWindow {
 		return presented_frames;
 	}
 
+	/// Renders a frame right away and returns what it drew, or a null image if the viewport can't render (e.g. minimized).
+	/// Stalls until the GPU has finished the frame.
+	QImage capture();
+
   protected:
 	/// Records the frame. The color image is in COLOR_ATTACHMENT_OPTIMAL layout and must stay in it; the depth image is in
 	/// DEPTH_ATTACHMENT_OPTIMAL with undefined contents, so clear it when beginning rendering. The polygon mode is FILL.
@@ -85,6 +89,9 @@ class VulkanViewport : public QWindow {
 	std::vector<VkSemaphore> render_finished;
 	bool swapchain_dirty = true;
 	bool update_scheduled = false;
+	/// Set by capture() for the frame it renders, which then copies the swapchain image into `captured`
+	bool capture_requested = false;
+	QImage captured;
 
 	VkCommandPool command_pool = VK_NULL_HANDLE;
 	std::array<Frame, frames_in_flight> frames;

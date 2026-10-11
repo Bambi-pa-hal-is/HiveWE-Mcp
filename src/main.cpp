@@ -12,6 +12,7 @@
 
 #include "main_window/hivewe.h"
 #include "render/vulkan_test_modes.h"
+#include "api/api.h"
 #include "DockManager.h"
 
 #ifdef WIN32
@@ -145,6 +146,15 @@ int main(int argc, char* argv[]) {
 	}
 
 	HiveWE w;
+
+	// `--api-port <port>` moves the automation API, `--no-api` turns it off
+	if (!QCoreApplication::arguments().contains("--no-api")) {
+		uint16_t api_port = api::default_port;
+		if (const qsizetype index = QCoreApplication::arguments().indexOf("--api-port"); index >= 0 && index + 1 < QCoreApplication::arguments().size()) {
+			api_port = QCoreApplication::arguments()[index + 1].toUShort();
+		}
+		api::start(api_port, w);
+	}
 
 	std::println("Application start: {}ms", start_timer.elapsed_ms());
 

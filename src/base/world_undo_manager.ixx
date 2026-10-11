@@ -37,9 +37,10 @@ export class WorldUndoManager {
 			return;
 		}
 
+		// Backwards, as a later action in the group may build on an earlier one
 		auto& actions = undo_actions.back();
-		for (const auto& i : actions) {
-			i->undo(ctx);
+		for (auto i = actions.rbegin(); i != actions.rend(); ++i) {
+			(*i)->undo(ctx);
 		}
 
 		redo_actions.push_back(std::move(actions));
@@ -71,6 +72,25 @@ export class WorldUndoManager {
 
 		undo_actions.back().push_back(std::move(action));
 		redo_actions.clear();
+	}
+
+	/// The number of undo groups, to pass to merge_groups_since() later
+	size_t group_count() const {
+		return undo_actions.size();
+	}
+
+	/// Merges the undo groups added since group_count() returned `mark` into one, so they undo as one step
+	void merge_groups_since(const size_t mark) {
+		if (undo_actions.size() <= mark + 1) {
+			return;
+		}
+		auto& target = undo_actions[mark];
+		for (size_t i = mark + 1; i < undo_actions.size(); i++) {
+			for (auto& action : undo_actions[i]) {
+				target.push_back(std::move(action));
+			}
+		}
+		undo_actions.resize(mark + 1);
 	}
 
 	/// Removes all undo/redo operations

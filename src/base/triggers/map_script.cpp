@@ -684,6 +684,43 @@ void generate_ally_priorities(MapScriptWriter& script, const MapInfo& map_info) 
 	});
 }
 
+/// Applies the map's tech availability from the scenario settings, like the World Editor's InitUpgrades and InitTechTree
+void generate_tech_availability(MapScriptWriter& script, const MapInfo& map_info) {
+	script.function("InitUpgrades", [&]() {
+		for (const auto& upgrade : map_info.available_upgrades) {
+			for (const auto& player : map_info.players) {
+				if (!(upgrade.player_flags & (1 << player.internal_number))) {
+					continue;
+				}
+				const std::string player_reference = "Player(" + std::to_string(player.internal_number) + ")";
+				// Availability: 0 = unavailable from this level on, 1 = available, 2 = researched up to this level
+				if (upgrade.availability == 0) {
+					script.call("SetPlayerTechMaxAllowed", player_reference, script.four_cc(upgrade.id), upgrade.level - 1);
+				} else if (upgrade.availability == 2) {
+					script.call("SetPlayerTechResearched", player_reference, script.four_cc(upgrade.id), upgrade.level);
+				}
+			}
+		}
+	});
+
+	script.function("InitTechTree", [&]() {
+		// The listed units, items, abilities and upgrades are unavailable to the flagged players
+		for (const auto& tech : map_info.available_tech) {
+			for (const auto& player : map_info.players) {
+				if (!(tech.player_flags & (1 << player.internal_number))) {
+					continue;
+				}
+				const std::string player_reference = "Player(" + std::to_string(player.internal_number) + ")";
+				if (abilities_slk.row_headers.contains(tech.id)) {
+					script.call("SetPlayerAbilityAvailable", player_reference, script.four_cc(tech.id), false);
+				} else {
+					script.call("SetPlayerTechMaxAllowed", player_reference, script.four_cc(tech.id), 0);
+				}
+			}
+		}
+	});
+}
+
 void generate_main(MapScriptWriter& script, const Terrain& terrain, const MapInfo& map_info, const TilesetData& tilesets) {
 	script.function("main", [&]() {
 		script.call(
@@ -744,6 +781,8 @@ void generate_main(MapScriptWriter& script, const Terrain& terrain, const MapInf
 		script.call("InitSounds");
 		script.call("CreateRegions");
 		script.call("CreateCameras");
+		script.call("InitUpgrades");
+		script.call("InitTechTree");
 		script.call("CreateAllDestructables");
 		script.call("CreateAllItems");
 		script.call("CreateAllUnits");
@@ -869,6 +908,7 @@ std::expected<void, std::string> Triggers::generate_map_script(
 	generate_players(script_writer, map_info);
 	generate_custom_teams(script_writer, map_info);
 	generate_ally_priorities(script_writer, map_info);
+	generate_tech_availability(script_writer, map_info);
 	generate_main(script_writer, terrain, map_info, tilesets);
 	generate_map_configuration(script_writer, terrain, units, map_info);
 

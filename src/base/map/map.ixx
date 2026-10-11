@@ -62,6 +62,10 @@ export class Map: public QObject {
 	bool loaded = false;
 	/// The map was newly created and has not been resaved yet
 	bool is_in_temp_dir = false;
+	/// When false, save() reports problems in save_errors instead of message boxes. The automation API turns this off.
+	bool show_dialogs = true;
+	/// Problems from the last save() while show_dialogs is false
+	std::vector<std::string> save_errors;
 
 	TriggerStrings trigger_strings;
 	Triggers triggers;
@@ -627,10 +631,15 @@ export class Map: public QObject {
 
 	bool save(const fs::path& path) {
 		Timer timer;
+		save_errors.clear();
 		if (!fs::equivalent(path, filesystem_path)) {
 			try {
 				fs::copy(filesystem_path, fs::absolute(path), fs::copy_options::recursive);
 			} catch (fs::filesystem_error& e) {
+				if (!show_dialogs) {
+					save_errors.push_back(e.what());
+					return false;
+				}
 				QMessageBox msgbox;
 				msgbox.setText(e.what());
 				msgbox.exec();
@@ -666,6 +675,8 @@ export class Map: public QObject {
 		save_modification_file("war3mapSkin.w3q", upgrade_slk, upgrade_meta_slk, true, true);
 
 		regions.save(terrain.offset.x, terrain.offset.y);
+		cameras.save(terrain.offset.x, terrain.offset.y);
+		sounds.save();
 		info.save(terrain.tileset_id);
 
 		trigger_strings.save();
@@ -677,7 +688,9 @@ export class Map: public QObject {
 		}
 
 		const auto result = triggers.generate_map_script(terrain, units, doodads, info, sounds, regions, cameras, tilesets, mode);
-		if (!result.has_value()) {
+		if (!result.has_value() && !show_dialogs) {
+			save_errors.push_back("There were compilation errors: " + result.error());
+		} else if (!result.has_value()) {
 			QMessageBox::information(
 				nullptr,
 				"vJass output",

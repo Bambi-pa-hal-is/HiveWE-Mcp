@@ -13,6 +13,10 @@
     "bullet3",
     "bzip2",
     "casclib",
+    {
+      "name": "cpp-httplib",
+      "default-features": false
+    },
     "glm",
     {
       "name": "glslang",

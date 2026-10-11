@@ -274,7 +274,7 @@ MapWidget::MapWidget(QWidget* parent) : QWidget(parent) {
 	}
 
 	// Owned by the container
-	auto* viewport = new MapViewport();
+	viewport = new MapViewport();
 	QWidget* container = QWidget::createWindowContainer(viewport, this);
 	// Native from the start, so the viewport is embedded in the container's own window. The native minimap makes its
 	// siblings native later, and an alien container then leaves the viewport under an empty native window.

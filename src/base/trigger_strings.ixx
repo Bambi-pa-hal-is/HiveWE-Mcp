@@ -93,6 +93,11 @@ export class TriggerStrings {
 		hierarchy.map_file_write("war3map.wts", writer.buffer);
 	}
 
+	/// Every key and its text
+	const std::map<std::string, std::string>& all() const {
+		return strings;
+	}
+
 	std::string_view string(const std::string_view key) const {
 		const auto found = strings.find(std::string(key));
 

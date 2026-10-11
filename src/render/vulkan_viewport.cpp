@@ -259,6 +259,8 @@ bool VulkanViewport::ensure_swapchain() {
 					  .set_desired_present_mode(VK_PRESENT_MODE_MAILBOX_KHR)
 					  .add_fallback_present_mode(VK_PRESENT_MODE_FIFO_KHR)
 					  .set_desired_extent(width, height)
+					  // capture() copies the swapchain image out
+					  .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
 					  .set_old_swapchain(swapchain)
 					  .build();
 	if (!result) {
@@ -314,6 +316,13 @@ void VulkanViewport::destroy_swapchain() {
 		vkb::destroy_swapchain(swapchain);
 		swapchain = {};
 	}
+}
+
+QImage VulkanViewport::capture() {
+	capture_requested = true;
+	render();
+	capture_requested = false;
+	return std::exchange(captured, QImage());
 }
 
 void VulkanViewport::render() {
@@ -416,13 +425,47 @@ void VulkanViewport::render() {
 		frame.allocator
 	);
 
+	// For capture(): copy the finished image to a host-visible buffer before presenting it
+	VkBuffer readback = VK_NULL_HANDLE;
+	VmaAllocation readback_allocation = VK_NULL_HANDLE;
+	VmaAllocationInfo readback_info = {};
+	const bool capturing = capture_requested;
+	if (capturing) {
+		const VkBufferCreateInfo buffer_info = {
+			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+			.size = VkDeviceSize(swapchain.extent.width) * swapchain.extent.height * 4,
+			.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+		};
+		const VmaAllocationCreateInfo allocation_info = {
+			.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+			.usage = VMA_MEMORY_USAGE_AUTO,
+		};
+		vmaCreateBuffer(vk_context.allocator, &buffer_info, &allocation_info, &readback, &readback_allocation, &readback_info);
+
+		image_barrier(
+			frame.cmd,
+			image,
+			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_COPY_BIT,
+			VK_ACCESS_2_TRANSFER_READ_BIT
+		);
+		const VkBufferImageCopy region = {
+			.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1},
+			.imageExtent = {swapchain.extent.width, swapchain.extent.height, 1},
+		};
+		vkCmdCopyImageToBuffer(frame.cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, 1, &region);
+	}
+
 	image_barrier(
 		frame.cmd,
 		image,
-		VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		capturing ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 		VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-		VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-		VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+		capturing ? VK_PIPELINE_STAGE_2_COPY_BIT : VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+		capturing ? VK_ACCESS_2_NONE : VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
 		VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
 		VK_ACCESS_2_NONE
 	);
@@ -458,6 +501,21 @@ void VulkanViewport::render() {
 		.pSignalSemaphoreInfos = &signal_info,
 	};
 	vk_context.submit(submit, frame.in_flight);
+
+	if (capturing) {
+		vkWaitForFences(device, 1, &frame.in_flight, VK_TRUE, UINT64_MAX);
+		vmaInvalidateAllocation(vk_context.allocator, readback_allocation, 0, VK_WHOLE_SIZE);
+		// The swapchain is B8G8R8A8, which is QImage's ARGB32 byte order on little endian. Alpha is meaningless here.
+		const QImage view(
+			static_cast<const uchar*>(readback_info.pMappedData),
+			static_cast<int>(swapchain.extent.width),
+			static_cast<int>(swapchain.extent.height),
+			static_cast<qsizetype>(swapchain.extent.width) * 4,
+			QImage::Format_RGB32
+		);
+		captured = view.copy();
+		vmaDestroyBuffer(vk_context.allocator, readback, readback_allocation);
+	}
 
 	present_id++;
 	const VkPresentIdKHR present_id_info = {
