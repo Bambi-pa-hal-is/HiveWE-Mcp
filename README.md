@@ -29,6 +29,37 @@ Some of the benefits over the vanilla WE:
 - Edit global tile pathing  
 ![Edit global tile pathing](/Screenshots/GlobalPathingEditing.png)
 
+## Build maps with Claude (MCP)
+
+This fork lets Claude (or any other MCP client) build your map in the running editor. You ask in plain language, e.g. "make a forest clearing with a river and a bandit camp", and the changes appear in the editor as Claude makes them.
+
+Claude can:
+- **Map:** create, open (folder or `.w3x`), save, export to `.w3x`, and test in Warcraft III.
+- **Terrain:** raise, lower, smooth and flatten ground, paint tiles, add cliffs, ramps and water, change the tileset, and edit pathing.
+- **Placed objects:** place, edit and delete doodads, destructibles, units, items, regions and cameras.
+- **Object editor:** create custom units, abilities, items, upgrades and more, and change any field.
+- **Settings:** map info, players, forces and teams, tech availability, random tables and gameplay constants.
+- **Scripts:** write JASS or Lua triggers, variables and the map header, and compile them to check for errors. TypeScript (w3ts) projects can be built and loaded straight into the map.
+- **Assets:** import custom models and add sounds.
+- **Feedback:** take screenshots to check its work, and undo any edit.
+
+### Setup
+
+1. Build HiveWE (see [Build Instructions](#build-instructions)) and the MCP server, which needs the [.NET 10 SDK](https://dotnet.microsoft.com/download):
+   ```shell
+   dotnet build tools/HiveWE.Mcp -c Release
+   ```
+2. Start `HiveWE.exe`. It starts the MCP server automatically on `http://127.0.0.1:47778/mcp`.
+3. Connect Claude Code once:
+   ```shell
+   claude mcp add --transport http hivewe http://127.0.0.1:47778/mcp
+   ```
+4. Start Claude Code and ask it to work on the open map.
+
+The **MCP** tab in the ribbon has a **Connect Claude** button that shows this command, whether the server is running, and buttons to start or stop it.
+
+To use the server over stdio, use a different port, or call the editor's API directly, see [tools/HiveWE.Mcp/README.md](tools/HiveWE.Mcp/README.md). It also lists every tool.
+
 ## Download
 
 See the [releases page](https://github.com/stijnherfst/HiveWE/releases) for binary downloads.
