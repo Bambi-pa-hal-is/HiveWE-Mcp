@@ -325,6 +325,91 @@ QImage VulkanViewport::capture() {
 	return std::exchange(captured, QImage());
 }
 
+QImage VulkanViewport::capture_offscreen(const uint32_t width, const uint32_t height) {
+	const VkExtent2D extent = {width, height};
+	const Image color = create_image(
+		color_attachment_format,
+		extent,
+		1,
+		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+		VK_IMAGE_ASPECT_COLOR_BIT
+	);
+	const Image depth = create_image(depth_attachment_format, extent, 1, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+	VkBuffer readback = VK_NULL_HANDLE;
+	VmaAllocation readback_allocation = VK_NULL_HANDLE;
+	VmaAllocationInfo readback_info = {};
+	const VkBufferCreateInfo buffer_info = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size = VkDeviceSize(width) * height * 4,
+		.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+	};
+	const VmaAllocationCreateInfo allocation_info = {
+		.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+		.usage = VMA_MEMORY_USAGE_AUTO,
+	};
+	vmaCreateBuffer(vk_context.allocator, &buffer_info, &allocation_info, &readback, &readback_allocation, &readback_info);
+
+	// Its own allocator, freed after the GPU is done since immediate_submit waits
+	FrameAllocator allocator;
+	vk_context.immediate_submit([&](const VkCommandBuffer cmd) {
+		vkCmdSetPolygonModeEXT(cmd, VK_POLYGON_MODE_FILL);
+		image_barrier(
+			cmd,
+			color.image,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_ACCESS_2_NONE,
+			VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT
+		);
+		image_barrier(
+			cmd,
+			depth.image,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+			VK_ACCESS_2_NONE,
+			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+			VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+			VK_IMAGE_ASPECT_DEPTH_BIT
+		);
+
+		record(cmd, FrameTarget {.image = color.image, .view = color.view, .extent = extent, .depth_view = depth.view}, allocator);
+
+		image_barrier(
+			cmd,
+			color.image,
+			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+			VK_PIPELINE_STAGE_2_COPY_BIT,
+			VK_ACCESS_2_TRANSFER_READ_BIT
+		);
+		const VkBufferImageCopy region = {
+			.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1},
+			.imageExtent = {width, height, 1},
+		};
+		vkCmdCopyImageToBuffer(cmd, color.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, 1, &region);
+	});
+
+	vmaInvalidateAllocation(vk_context.allocator, readback_allocation, 0, VK_WHOLE_SIZE);
+	const QImage view(
+		static_cast<const uchar*>(readback_info.pMappedData),
+		static_cast<int>(width),
+		static_cast<int>(height),
+		static_cast<qsizetype>(width) * 4,
+		QImage::Format_RGB32
+	);
+	QImage result = view.copy();
+	vmaDestroyBuffer(vk_context.allocator, readback, readback_allocation);
+	destroy_image_deferred(color);
+	destroy_image_deferred(depth);
+	return result;
+}
+
 void VulkanViewport::render() {
 	if (!isExposed() || !ensure_swapchain()) {
 		return;

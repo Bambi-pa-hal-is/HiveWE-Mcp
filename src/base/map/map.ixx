@@ -14,6 +14,7 @@ import BinaryReader;
 import GameCameras;
 import Imports;
 import MapInfo;
+import MinimapFiles;
 import Tileset;
 import Doodad;
 import Sounds;
@@ -678,6 +679,7 @@ export class Map: public QObject {
 		cameras.save(terrain.offset.x, terrain.offset.y);
 		sounds.save();
 		info.save(terrain.tileset_id);
+		save_minimap_files(terrain, units);
 
 		trigger_strings.save();
 		triggers.save();

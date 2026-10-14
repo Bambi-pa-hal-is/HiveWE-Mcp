@@ -33,18 +33,23 @@ HiveWE looks for the server in this order:
 
 ## Tools
 
+Ideas for more tools go in [WISHLIST.md](WISHLIST.md).
+
 | Tool | What it does |
 |---|---|
 | `hivewe_status` | Editor version, Warcraft III directory, graphics mode |
 | `hivewe_map` | info, new, open (folder or .w3x), save, export (.w3x), test in Warcraft III |
-| `hivewe_screenshot`, `hivewe_minimap` | Images of the map view and terrain minimap |
+| `hivewe_save` | Save, save as, and autosave |
+| `hivewe_screenshot`, `hivewe_overview`, `hivewe_minimap` | Images: the map view (rendered offscreen), the whole map from above, the terrain minimap |
+| `hivewe_view` | Toggle click helpers, pathing, regions and other overlays |
+| `hivewe_game_log` | The end of Warcraft III's log files after a test |
 | `hivewe_camera` | Editor camera |
 | `hivewe_undo` | Undo/redo map edits |
-| `hivewe_terrain` | Raise/lower, smooth, flatten, paint tiles, cliffs and ramps, water, boundaries, tile list and tileset, reading corners |
+| `hivewe_terrain` | Raise/lower, smooth, flatten, paint tiles, cliffs and ramps, water (optionally at an exact height), boundaries, strokes along a path, painting a whole grid of tiles, tile list and tileset, reading corners |
 | `hivewe_pathing` | Pathing cells |
-| `hivewe_doodads`, `hivewe_units`, `hivewe_items` | Placed objects: list, create (many at once), update, delete |
+| `hivewe_doodads`, `hivewe_units`, `hivewe_items` | Placed objects: list, create (many at once), update, delete; doodads also scatter randomly and report which variations have models |
 | `hivewe_regions`, `hivewe_game_cameras` | Regions and camera setups |
-| `hivewe_objects` | Object editor data for all seven kinds: list, fields, create custom objects, set/reset fields, delete |
+| `hivewe_objects` | Object editor data for all seven kinds: list, search across kinds, fields, create custom objects, set/reset fields, delete |
 | `hivewe_gameplay_constants` | Gameplay constants |
 | `hivewe_map_info`, `hivewe_players`, `hivewe_forces`, `hivewe_tech`, `hivewe_random_tables` | Scenario settings |
 | `hivewe_script`, `hivewe_triggers`, `hivewe_variables`, `hivewe_strings` | JASS/Lua map header, script triggers, variables, trigger strings, compiling |

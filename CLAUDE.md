@@ -52,13 +52,15 @@ The app needs a Warcraft III install: game data is read from CASC, and the direc
 This fork adds a JSON-RPC 2.0 API so an MCP server can drive the running editor. Keep the API code isolated so merging upstream HiveWE stays painless.
 
 **Hooks in upstream files:**
-- `api::start()` in `main.cpp`, `add_subdirectory(api)` in `src/CMakeLists.txt`, and `cpp-httplib` in `vcpkg.json`.
-- `VulkanViewport::capture()` and `MapWidget::viewport`, for screenshots.
+- `api::start()` in `main.cpp`, `add_subdirectory(api)` in `src/CMakeLists.txt`, and `cpp-httplib` and `lua` (Lua syntax checks) in `vcpkg.json`.
+- `VulkanViewport::capture()`, `capture_offscreen()` and `MapWidget::viewport`, for screenshots.
 - `Map::show_dialogs` and `Map::save_errors`, so saving reports problems instead of opening message boxes.
 - `GameCameras::save` and `Sounds::save`, which were empty stubs upstream.
 - `TriggerStrings::all()`.
 - `WorldUndoManager` merging, and undo now runs a group's actions in reverse.
 - The `InitUpgrades`/`InitTechTree` generation in `map_script.cpp`.
+- `save_minimap_files()` (`src/base/minimap_files.ixx`), called from `Map::save`: Warcraft III 3.0 crashes on maps without `war3mapMap.blp`, so every save writes it and `war3map.mmp`.
+- `MapInfo` fixes: force share-vision bit, random unit table positions count.
 
 **Code layout:**
 - `src/api/http_transport.cpp`: a plain `.cpp` that owns httplib and serves `POST /rpc` on `127.0.0.1` only, requiring `Content-Type: application/json`. Exporting httplib types from a module crashes MSVC, so httplib stays out of the modules.

@@ -33,9 +33,70 @@ public static class EditorTools
         CancellationToken cancellationToken = default) =>
         Dispatch.Run(hivewe, "map", action, ["info", "new", "open", "save", "export", "test"], args, cancellationToken);
 
+    [McpServerTool(Name = "hivewe_save")]
+    [Description("""
+        Saves the open map to its folder, or to path (the map folder itself, which must be empty or new; new maps need one).
+        autosave_minutes turns on saving every N minutes (0 turns it off). Returns the folder and any script compile warnings.
+        """)]
+    public static async Task<string> Save(
+        HiveWeClient hivewe,
+        [Description("Folder to save to, for new maps or save as")] string? path = null,
+        [Description("Also save automatically every this many minutes, 0 to stop")] int? autosave_minutes = null,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new JsonObject();
+        if (path is not null)
+        {
+            parameters["path"] = path;
+        }
+        var result = await hivewe.CallAsync("map.save", parameters, cancellationToken);
+        if (autosave_minutes is { } minutes)
+        {
+            await hivewe.CallAsync("map.autosave", new JsonObject { ["minutes"] = minutes }, cancellationToken);
+        }
+        return result?.ToJsonString() ?? "null";
+    }
+
+    [McpServerTool(Name = "hivewe_overview", ReadOnly = true)]
+    [Description("The whole map from straight above, with terrain, doodads, units and water, as one image. Use it to review the layout.")]
+    public static Task<IEnumerable<ContentBlock>> Overview(
+        HiveWeClient hivewe,
+        [Description("Longest side of the image in pixels, default 1024")] int? max_size = null,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new JsonObject();
+        AddIfSet(parameters, "max_size", max_size);
+        return Image(hivewe, "view.overview", parameters, cancellationToken);
+    }
+
+    [McpServerTool(Name = "hivewe_view")]
+    [Description("""
+        What the editor view draws. action get, or set with any of: units, doodads, pathing, regions, brush, lighting, water,
+        click_helpers (the green boxes on small doodads, editor only), wireframe. Turn click_helpers off for clean screenshots,
+        pathing or regions on to check them.
+        """)]
+    public static Task<string> View(
+        HiveWeClient hivewe,
+        [Description("get or set")] string action,
+        [Description("For set: the toggles, e.g. {\"click_helpers\": false}")] JsonElement? args = null,
+        CancellationToken cancellationToken = default) =>
+        Dispatch.Run(hivewe, "view", action, ["get", "set"], args, cancellationToken);
+
+    [McpServerTool(Name = "hivewe_game_log", ReadOnly = true)]
+    [Description("The end of Warcraft III's newest log files (Documents/Warcraft III/Logs and Errors), to find script errors after hivewe_map test.")]
+    public static Task<string> GameLog(
+        HiveWeClient hivewe,
+        [Description("Lines per file, default 80")] int? lines = null,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new JsonObject();
+        AddIfSet(parameters, "lines", lines);
+        return hivewe.CallForTextAsync("game.log", JsonSerializer.SerializeToElement(parameters), cancellationToken);
+    }
+
     [McpServerTool(Name = "hivewe_screenshot", ReadOnly = true)]
     [Description("""
-        Renders the editor's map view and returns it as an image. Optionally moves the camera first:
+        Renders the map and returns it as an image (offscreen, so it works while the editor is minimized). Optionally moves the camera first:
         x, y (world position looked at), distance (game units, about 1500-4000 for an overview), yaw (degrees, 0 looks north),
         pitch (degrees, negative looks down, e.g. -60). max_size limits the longest side in pixels (default 1024).
         """)]
@@ -47,9 +108,13 @@ public static class EditorTools
         [Description("Camera yaw in degrees")] float? yaw = null,
         [Description("Camera pitch in degrees, negative looks down")] float? pitch = null,
         [Description("Longest side of the image in pixels, default 1024")] int? max_size = null,
+        [Description("Render width in pixels, default 1280")] int? width = null,
+        [Description("Render height in pixels, default 720")] int? height = null,
         CancellationToken cancellationToken = default)
     {
         var parameters = new JsonObject();
+        AddIfSet(parameters, "width", width);
+        AddIfSet(parameters, "height", height);
         AddIfSet(parameters, "x", x);
         AddIfSet(parameters, "y", y);
         AddIfSet(parameters, "distance", distance);

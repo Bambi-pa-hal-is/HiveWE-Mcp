@@ -23,13 +23,18 @@ public static class WorldTools
         - height_at {x, y}: interpolated ground height.
         - tiles {all?}: the tileset, the map's tiles and cliffs; all=true lists every tileset and tile id.
         - set_tiles {tiles, tileset?, replace?}: sets the map's tile list (max 16) and base tileset letter; replace maps removed tiles to new ones.
+        - paint_grid {x, y, columns, rows, tiles}: sets the tile of every corner in a grid at once (one undo step). tiles is row-major from
+          the corner at x/y upwards; "" keeps a corner. Corners are 128 apart. Best for rule-based texturing of large areas.
+        - path {action, points: [[x, y], ...], spacing?, ...}: runs raise/smooth/flatten/paint/cliff/water/boundary/pathing with its usual
+          arguments along a polyline (spacing defaults to a third of the brush). One undo step. Use it for roads and rivers.
+        water also takes height (world units of the surface): water within 51 units above the ground is shallow and walkable.
         """)]
     public static Task<string> Terrain(
         HiveWeClient hivewe,
         [Description("raise, smooth, flatten, paint, cliff, water, boundary, get, height_at, tiles or set_tiles")] string action,
         [Description("The action's arguments as a JSON object")] JsonElement? args = null,
         CancellationToken cancellationToken = default) =>
-        Dispatch.Run(hivewe, "terrain", action, ["raise", "smooth", "flatten", "paint", "cliff", "water", "boundary", "get", "height_at", "tiles", "set_tiles"], args, cancellationToken);
+        Dispatch.Run(hivewe, "terrain", action, ["raise", "smooth", "flatten", "paint", "cliff", "water", "boundary", "get", "height_at", "tiles", "set_tiles", "paint_grid", "path"], args, cancellationToken);
 
     [McpServerTool(Name = "hivewe_pathing")]
     [Description("""
@@ -53,6 +58,11 @@ public static class WorldTools
           or {doodads: [{...}, ...]} to place many in one undo step. Doodads with a footprint snap to the pathing grid.
         - update {id or ids, ...same fields as create}: changes the given fields.
         - delete {id or ids} or {type?, area filter}: removes doodads.
+        - scatter {type or types, x, y, radius | left, bottom, right, top, count | density (per 1000x1000), min_distance? (100),
+          scale? [min, max], avoid? [{x, y, radius} | {points, width}], avoid_water? (true), avoid_unwalkable? (true), seed?}:
+          random placement with random facing, for forests, flowers and rubble. One undo step.
+        - models {type}: which variations of a type have a model. Variations without one show as green boxes; created doodads
+          only pick random variations that have models.
         state: invisible_non_solid, visible_non_solid, visible_solid. item_drops: [[{"type": "ratc", "chance": 100}], ...] (one list per drop set).
         """)]
     public static Task<string> Doodads(
@@ -60,7 +70,7 @@ public static class WorldTools
         [Description("list, get, create, update or delete")] string action,
         [Description("The action's arguments as a JSON object")] JsonElement? args = null,
         CancellationToken cancellationToken = default) =>
-        Dispatch.Run(hivewe, "doodads", action, ["list", "get", "create", "update", "delete"], args, cancellationToken);
+        Dispatch.Run(hivewe, "doodads", action, ["list", "get", "create", "update", "delete", "scatter", "models"], args, cancellationToken);
 
     [McpServerTool(Name = "hivewe_units")]
     [Description("""

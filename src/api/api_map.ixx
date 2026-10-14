@@ -1,6 +1,11 @@
 module;
 
+#include <QDir>
+#include <QDirIterator>
+#include <QFileInfo>
 #include <QProcess>
+#include <QStandardPaths>
+#include <QTimer>
 #include <QSettings>
 #include <QString>
 #include <QStringList>
@@ -194,6 +199,66 @@ namespace api {
 		return result;
 	}
 
+	QTimer* autosave_timer = nullptr;
+
+	/// Saves every `minutes` minutes while the map has a folder (0 turns it off)
+	nlohmann::json map_autosave(const nlohmann::json& params) {
+		const int minutes = required<int>(params, "minutes");
+		if (autosave_timer == nullptr) {
+			autosave_timer = new QTimer();
+			QObject::connect(autosave_timer, &QTimer::timeout, [] {
+				if (map != nullptr && map->loaded && !map->is_in_temp_dir) {
+					save_to(*map, map->filesystem_path);
+					std::println("Autosaved {}", map->filesystem_path.string());
+				}
+			});
+		}
+		if (minutes <= 0) {
+			autosave_timer->stop();
+			return {{"autosave", false}};
+		}
+		autosave_timer->start(minutes * 60 * 1000);
+		return {{"autosave", true}, {"minutes", minutes}};
+	}
+
+	/// The end of Warcraft III's newest log files (Documents/Warcraft III/Logs and Errors), e.g. after map.test
+	nlohmann::json game_log(const nlohmann::json& params) {
+		const int lines = std::clamp(params.value("lines", 80), 1, 2000);
+		const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+		nlohmann::json files = nlohmann::json::array();
+		for (const char* folder : {"Logs", "Errors"}) {
+			// Errors holds a folder per crash, so look through subfolders too, skipping the binary dumps
+			QFileInfoList entries;
+			QDirIterator iterator(documents + "/Warcraft III/" + folder, {"*.txt", "*.log"}, QDir::Files, QDirIterator::Subdirectories);
+			while (iterator.hasNext()) {
+				entries.push_back(QFileInfo(iterator.next()));
+			}
+			std::ranges::sort(entries, [](const QFileInfo& a, const QFileInfo& b) {
+				return a.lastModified() > b.lastModified();
+			});
+			for (qsizetype i = 0; i < std::min<qsizetype>(entries.size(), params.value("files", 2)); i++) {
+				std::ifstream stream(entries[i].filePath().toStdWString());
+				std::deque<std::string> tail;
+				for (std::string line; std::getline(stream, line);) {
+					tail.push_back(line);
+					if (static_cast<int>(tail.size()) > lines) {
+						tail.pop_front();
+					}
+				}
+				std::string text;
+				for (const auto& line : tail) {
+					text += line + "\n";
+				}
+				files.push_back({
+					{"file", entries[i].filePath().toStdString()},
+					{"modified", entries[i].lastModified().toString(Qt::ISODate).toStdString()},
+					{"text", text},
+				});
+			}
+		}
+		return files;
+	}
+
 	export std::vector<MethodEntry> map_methods() {
 		return {
 			{"map.info", map_info},
@@ -201,6 +266,8 @@ namespace api {
 			{"map.open", map_open},
 			{"map.save", map_save},
 			{"map.test", map_test},
+			{"map.autosave", map_autosave},
+			{"game.log", game_log},
 		};
 	}
 } // namespace api

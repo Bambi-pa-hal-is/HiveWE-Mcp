@@ -11,6 +11,7 @@ import Doodad;
 import Doodads;
 import GameCameras;
 import Globals;
+import Hierarchy;
 import Map;
 import PathingMap;
 import Rects;
@@ -278,31 +279,82 @@ namespace api {
 	}
 
 	/// Creates one doodad, or many with "doodads": [{type, x, y, ...}, ...] as one undo step
+	/// The variations of a doodad or destructible type that have a model in the current graphics mode, following the
+	/// file naming Doodads::get_mesh uses
+	std::vector<int> model_variations(const std::string& type) {
+		const bool is_doodad = doodads_slk.row_headers.contains(type);
+		const slk::SLK& slk = is_doodad ? doodads_slk : destructibles_slk;
+		const std::filesystem::path base = string_replaced(slk.data<std::string_view>("file", type), "\\", "/");
+		const int count = std::max(1, slk.data<int>("numvar", type));
+		std::vector<int> found;
+		for (int i = 0; i < count; i++) {
+			std::filesystem::path path = base;
+			if (count > 1) {
+				path.replace_filename(is_doodad ? base.filename().string() + std::to_string(i) : base.stem().string() + std::to_string(i));
+			}
+			if (hierarchy.file_exists(path, Hierarchy::FileSource::all, {".mdl", ".mdx"})) {
+				found.push_back(i);
+			}
+		}
+		return found;
+	}
+
+	nlohmann::json doodads_models(const nlohmann::json& params) {
+		loaded_map();
+		const std::string type = required<std::string>(params, "type");
+		const bool is_doodad = doodads_slk.row_headers.contains(type);
+		if (!is_doodad && !destructibles_slk.row_headers.contains(type)) {
+			throw Error(error_code::invalid_params, "Unknown doodad or destructible type " + type);
+		}
+		const std::vector<int> found = model_variations(type);
+		return {
+			{"type", type},
+			{"variations", std::max(1, (is_doodad ? doodads_slk : destructibles_slk).data<int>("numvar", type))},
+			{"with_model", found},
+			{"usable", !found.empty()},
+		};
+	}
+
+	/// Builds a doodad from create parameters. Without "variation" a random one that has a model is picked.
+	Doodad make_doodad(Map& m, const nlohmann::json& entry) {
+		const std::string type = required<std::string>(entry, "type");
+		const bool is_doodad = doodads_slk.row_headers.contains(type);
+		if (!is_doodad && !destructibles_slk.row_headers.contains(type)) {
+			throw Error(error_code::invalid_params, "Unknown doodad or destructible type " + type);
+		}
+		required<float>(entry, "x");
+		required<float>(entry, "y");
+
+		static std::unordered_map<std::string, std::vector<int>> usable_variations;
+		if (!usable_variations.contains(type)) {
+			usable_variations[type] = model_variations(type);
+		}
+		const std::vector<int>& usable = usable_variations[type];
+		const int variations = std::max(1, (is_doodad ? doodads_slk : destructibles_slk).data<int>("numvar", type));
+
+		Doodad d;
+		if (entry.contains("variation")) {
+			d.variation = std::clamp(entry["variation"].get<int>(), 0, variations - 1);
+		} else {
+			d.variation = usable.empty() ? 0 : usable[std::rand() % usable.size()];
+		}
+		d.init(type, m.doodads.get_mesh(type, d.variation), m.terrain);
+		d.creation_number = ++Doodad::auto_increment;
+		if (!entry.contains("facing")) {
+			d.angle = Doodad::acceptable_angle(type, d.pathing, 0.f, glm::radians(270.f));
+		}
+		apply_doodad_params(m, d, entry);
+		d.update(m.terrain);
+		return d;
+	}
+
 	nlohmann::json doodads_create(const nlohmann::json& params) {
 		Map& m = loaded_map();
 		const nlohmann::json list = params.contains("doodads") ? params["doodads"] : nlohmann::json::array({params});
 
 		auto edit = std::make_unique<DoodadEdit>();
 		for (const auto& entry : list) {
-			const std::string type = required<std::string>(entry, "type");
-			const bool is_doodad = doodads_slk.row_headers.contains(type);
-			if (!is_doodad && !destructibles_slk.row_headers.contains(type)) {
-				throw Error(error_code::invalid_params, "Unknown doodad or destructible type " + type);
-			}
-			required<float>(entry, "x");
-			required<float>(entry, "y");
-
-			const int variations = std::max(1, (is_doodad ? doodads_slk : destructibles_slk).data<int>("numvar", type));
-			Doodad d;
-			d.variation = entry.contains("variation") ? std::clamp(entry["variation"].get<int>(), 0, variations - 1) : std::rand() % variations;
-			d.init(type, m.doodads.get_mesh(type, d.variation), m.terrain);
-			d.creation_number = ++Doodad::auto_increment;
-			if (!entry.contains("facing")) {
-				d.angle = Doodad::acceptable_angle(type, d.pathing, 0.f, glm::radians(270.f));
-			}
-			apply_doodad_params(m, d, entry);
-			d.update(m.terrain);
-			edit->added.push_back(d);
+			edit->added.push_back(make_doodad(m, entry));
 		}
 
 		nlohmann::json created = nlohmann::json::array();
@@ -311,6 +363,130 @@ namespace api {
 		}
 		commit(m, std::move(edit));
 		return list.size() == 1 && !params.contains("doodads") ? created[0] : nlohmann::json {{"doodads", created}};
+	}
+
+	/// Places random doodads in an area: a circle (x, y, radius) or rectangle (left, bottom, right, top).
+	/// count or density (per 1000x1000 units) sets how many. Points on water or unwalkable ground, closer than min_distance to
+	/// another doodad, or inside an "avoid" zone ({x, y, radius} or {points, width}) are skipped. One undo step.
+	nlohmann::json doodads_scatter(const nlohmann::json& params) {
+		Map& m = loaded_map();
+		std::vector<std::string> types;
+		if (params.contains("types")) {
+			types = params["types"].get<std::vector<std::string>>();
+		} else {
+			types.push_back(required<std::string>(params, "type"));
+		}
+		const auto area = area_filter(m, params);
+		if (!area) {
+			throw Error(error_code::invalid_params, "Pass x, y, radius or left, bottom, right, top");
+		}
+		const bool circle = params.contains("radius");
+		const glm::vec2 center(static_cast<float>(area->center().x()), static_cast<float>(area->center().y()));
+		const float radius = static_cast<float>(area->width()) / 2.f;
+		const float area_size = static_cast<float>(area->width() * area->height()) * 128.f * 128.f * (circle ? 0.785f : 1.f);
+		const int count = params.contains("count") ? params["count"].get<int>()
+												   : static_cast<int>(params.value("density", 10.f) * area_size / 1'000'000.f);
+		const float min_distance = params.value("min_distance", 100.f) / 128.f;
+		const bool avoid_water = params.value("avoid_water", true);
+		const bool avoid_unwalkable = params.value("avoid_unwalkable", true);
+		const std::array<float, 2> scale = params.value("scale", std::array<float, 2> {1.f, 1.f});
+
+		struct Zone {
+			std::vector<glm::vec2> points;
+			float radius;
+		};
+		std::vector<Zone> zones;
+		for (const auto& zone : params.value("avoid", nlohmann::json::array())) {
+			if (zone.contains("points")) {
+				Zone z {{}, zone.value("width", 300.f) / 2.f / 128.f};
+				for (const auto& p : zone["points"]) {
+					z.points.push_back(world_to_internal(m, glm::vec2(p[0].get<float>(), p[1].get<float>())));
+				}
+				zones.push_back(z);
+			} else {
+				zones.push_back({{world_to_internal(m, glm::vec2(zone["x"].get<float>(), zone["y"].get<float>()))}, zone["radius"].get<float>() / 128.f});
+			}
+		}
+		const auto in_zone = [&](const glm::vec2 p) {
+			for (const auto& zone : zones) {
+				if (zone.points.size() == 1 && glm::distance(p, zone.points[0]) < zone.radius) {
+					return true;
+				}
+				for (size_t i = 1; i < zone.points.size(); i++) {
+					const glm::vec2 a = zone.points[i - 1];
+					const glm::vec2 b = zone.points[i];
+					const float t = std::clamp(glm::dot(p - a, b - a) / std::max(glm::dot(b - a, b - a), 0.0001f), 0.f, 1.f);
+					if (glm::distance(p, a + t * (b - a)) < zone.radius) {
+						return true;
+					}
+				}
+			}
+			return false;
+		};
+
+		// Existing doodads near the area count for the spacing, through a grid of tile sized buckets
+		std::unordered_map<int64_t, std::vector<glm::vec2>> buckets;
+		const auto bucket = [](const glm::vec2 p) {
+			return (static_cast<int64_t>(std::floor(p.x)) << 32) ^ static_cast<int64_t>(static_cast<uint32_t>(std::floor(p.y)));
+		};
+		for (const auto& d : m.doodads.doodads) {
+			buckets[bucket(glm::vec2(d.position))].push_back(glm::vec2(d.position));
+		}
+		const auto too_close = [&](const glm::vec2 p) {
+			const int reach = static_cast<int>(std::ceil(min_distance));
+			for (int dx = -reach; dx <= reach; dx++) {
+				for (int dy = -reach; dy <= reach; dy++) {
+					const auto found = buckets.find(bucket(p + glm::vec2(dx, dy)));
+					if (found == buckets.end()) {
+						continue;
+					}
+					for (const auto& other : found->second) {
+						if (glm::distance(p, other) < min_distance) {
+							return true;
+						}
+					}
+				}
+			}
+			return false;
+		};
+
+		const PathingMap& pathing = m.pathing_map;
+		std::mt19937 rng(params.contains("seed") ? params["seed"].get<uint32_t>() : std::random_device {}());
+		std::uniform_real_distribution<float> unit(0.f, 1.f);
+		auto edit = std::make_unique<DoodadEdit>();
+		for (int attempt = 0; attempt < count * 30 && static_cast<int>(edit->added.size()) < count; attempt++) {
+			glm::vec2 p;
+			if (circle) {
+				const float r = radius * std::sqrt(unit(rng));
+				const float a = unit(rng) * 2.f * glm::pi<float>();
+				p = center + glm::vec2(std::cos(a), std::sin(a)) * r;
+			} else {
+				p = glm::vec2(area->left() + unit(rng) * area->width(), area->top() + unit(rng) * area->height());
+			}
+			if (p.x < 1 || p.y < 1 || p.x >= m.terrain.width - 2 || p.y >= m.terrain.height - 2 || in_zone(p) || too_close(p)) {
+				continue;
+			}
+			const glm::ivec2 cell = glm::ivec2(p * 4.f);
+			const uint8_t flags = pathing.pathing_cells_static[cell.y * pathing.width + cell.x];
+			if ((avoid_water && (flags & PathingMap::Flags::water)) || (avoid_unwalkable && (flags & PathingMap::Flags::unwalkable))) {
+				continue;
+			}
+
+			const glm::vec2 world = internal_to_world(m, p);
+			nlohmann::json entry = {
+				{"type", types[rng() % types.size()]},
+				{"x", world.x},
+				{"y", world.y},
+				{"facing", unit(rng) * 360.f},
+				{"scale", scale[0] + unit(rng) * (scale[1] - scale[0])},
+			};
+			edit->added.push_back(make_doodad(m, entry));
+			buckets[bucket(p)].push_back(p);
+		}
+
+		const size_t placed = edit->added.size();
+		commit(m, std::move(edit));
+		return {{"placed", placed}, {"requested", count}};
 	}
 
 	nlohmann::json doodads_update(const nlohmann::json& params) {
@@ -850,6 +1026,8 @@ namespace api {
 			{"doodads.create", doodads_create},
 			{"doodads.update", doodads_update},
 			{"doodads.delete", doodads_delete},
+			{"doodads.scatter", doodads_scatter},
+			{"doodads.models", doodads_models},
 			{"units.list", units_list},
 			{"units.get", units_get},
 			{"units.create", units_create},

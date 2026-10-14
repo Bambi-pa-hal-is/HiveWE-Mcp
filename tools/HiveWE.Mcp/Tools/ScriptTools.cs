@@ -15,7 +15,7 @@ public static class ScriptTools
         The map script, JASS or Lua depending on hivewe_map_info script_language.
         - get_header: the map header code (custom script section: globals, libraries, helpers).
         - set_header {code, comment?}: replaces it.
-        - build: generates and compiles the whole map script without saving (JASS through JassHelper/vJass) and returns compile errors.
+        - build: generates and compiles the whole map script without saving (JASS through JassHelper/vJass, Lua through a Lua parser) and returns errors.
         - generated {from_line?, line_count?}: reads the generated war3map.j/war3map.lua with line numbers, to look up compile errors.
         """)]
     public static Task<string> Script(

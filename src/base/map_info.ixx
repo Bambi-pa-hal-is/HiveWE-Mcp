@@ -527,6 +527,7 @@ export class MapInfo {
 		for (const auto& i : random_unit_tables) {
 			writer.write(i.creation_number);
 			writer.write_c_string(i.name);
+			writer.write<uint32_t>(i.positions.size());
 			writer.write_vector(i.positions);
 
 			writer.write<uint32_t>(i.lines.size());
@@ -750,7 +751,7 @@ export class MapInfo {
 			const uint32_t force_flags = reader.read<uint32_t>();
 			i.allied = force_flags & 0b00000001;
 			i.allied_victory = force_flags & 0b00000010;
-			i.share_vision = force_flags & 0b00001000;
+			i.share_vision = force_flags & 0b00000100;
 			i.share_unit_control = force_flags & 0b00010000;
 			i.share_advanced_unit_control = force_flags & 0b00100000;
 

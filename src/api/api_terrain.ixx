@@ -15,6 +15,7 @@ import PathingMap;
 import PathingUndo;
 import Rects;
 import Terrain;
+import TerrainUndo;
 import Tileset;
 import Units;
 import WorldUndoManager;
@@ -177,12 +178,172 @@ namespace api {
 		});
 	}
 
+	/// The corners a size/shape brush covers around x/y, like the terrain brush
+	std::vector<glm::ivec2> brush_corners(const Map& m, const nlohmann::json& params) {
+		const glm::vec2 center = world_to_internal(m, glm::vec2(required<float>(params, "x"), required<float>(params, "y")));
+		const float radius = params.value("size", 4) / 2.f;
+		const std::string shape = params.value("shape", "circle");
+		std::vector<glm::ivec2> corners;
+		for (int j = static_cast<int>(std::floor(center.y - radius)); j <= static_cast<int>(std::ceil(center.y + radius)); j++) {
+			for (int i = static_cast<int>(std::floor(center.x - radius)); i <= static_cast<int>(std::ceil(center.x + radius)); i++) {
+				if (i < 0 || j < 0 || i >= m.terrain.width || j >= m.terrain.height) {
+					continue;
+				}
+				const glm::vec2 offset = glm::abs(glm::vec2(i, j) - center);
+				bool inside;
+				if (shape == "square") {
+					inside = std::max(offset.x, offset.y) <= radius;
+				} else if (shape == "diamond") {
+					inside = offset.x + offset.y <= radius;
+				} else {
+					inside = glm::length(offset) <= radius;
+				}
+				if (inside) {
+					corners.emplace_back(i, j);
+				}
+			}
+		}
+		return corners;
+	}
+
+	/// The bounding rectangle of some corners, grown by `margin`, clipped to the map
+	TerrainRect corner_bounds(const Map& m, const std::vector<glm::ivec2>& corners, const int margin) {
+		glm::ivec2 min(std::numeric_limits<int>::max());
+		glm::ivec2 max(std::numeric_limits<int>::min());
+		for (const auto& c : corners) {
+			min = glm::min(min, c);
+			max = glm::max(max, c);
+		}
+		min = glm::max(min - margin, glm::ivec2(0));
+		max = glm::min(max + margin, glm::ivec2(m.terrain.width - 1, m.terrain.height - 1));
+		return TerrainRect(min.x, min.y, max.x - min.x + 1, max.y - min.y + 1);
+	}
+
+	/// Changes corners through `change`, then refreshes the GPU data and static pathing of the area and records one undo step
+	template <typename Change>
+	void edit_corners(Map& m, const TerrainRect& area, const TerrainUndoType type, Change change) {
+		Terrain& t = m.terrain;
+		PathingMap& pathing = m.pathing_map;
+		auto terrain_undo = std::make_unique<TerrainGenericAction>();
+		terrain_undo->area = area;
+		terrain_undo->undo_type = type;
+		for (int j = area.top(); j <= area.bottom(); j++) {
+			for (int i = area.left(); i <= area.right(); i++) {
+				terrain_undo->old_corners.push_back(t.get_corner(i, j));
+			}
+		}
+
+		change();
+
+		for (int j = area.top(); j <= area.bottom(); j++) {
+			for (int i = area.left(); i <= area.right(); i++) {
+				terrain_undo->new_corners.push_back(t.get_corner(i, j));
+			}
+		}
+		if (type == TerrainUndoType::water) {
+			t.update_water(area);
+		} else {
+			t.update_ground_textures(area);
+		}
+		t.update_minimap();
+
+		// Tiles and water decide the static pathing, like the terrain brush recomputes it
+		const PathingRect cells = area.to_pathing().intersected(QRect(0, 0, pathing.width, pathing.height));
+		auto pathing_undo = std::make_unique<PathingMapAction>();
+		pathing_undo->area = cells;
+		constexpr uint8_t clear_mask = static_cast<uint8_t>(~(PathingMap::Flags::unbuildable | PathingMap::Flags::unwalkable
+															   | PathingMap::Flags::unflyable | PathingMap::Flags::blight
+															   | PathingMap::Flags::water | PathingMap::Flags::amphibious));
+		for (int j = cells.top(); j <= cells.bottom(); j++) {
+			for (int i = cells.left(); i <= cells.right(); i++) {
+				uint8_t& cell = pathing.pathing_cells_static[j * pathing.width + i];
+				pathing_undo->old_pathing.push_back(cell);
+				cell = (cell & clear_mask) | t.get_terrain_pathing(i, j, true, true, true, m.tilesets);
+				pathing_undo->new_pathing.push_back(cell);
+			}
+		}
+		pathing.upload_static_pathing();
+
+		m.world_undo.new_undo_group();
+		m.world_undo.add_undo_action(std::move(terrain_undo));
+		m.world_undo.add_undo_action(std::move(pathing_undo));
+	}
+
+	/// Water at an exact surface height (game units), so shallow (walkable) and deep water are easy to make
+	nlohmann::json terrain_water_at_height(Map& m, const nlohmann::json& params) {
+		const std::vector<glm::ivec2> corners = brush_corners(m, params);
+		if (corners.empty()) {
+			throw Error(error_code::invalid_params, "The brush is outside the map");
+		}
+		const float height = params["height"].get<float>() / 128.f - m.terrain.water_offset;
+		edit_corners(m, corner_bounds(m, corners, 1), TerrainUndoType::water, [&] {
+			for (const auto& c : corners) {
+				const size_t index = m.terrain.ci(c.x, c.y);
+				m.terrain.corner_water[index] = true;
+				m.terrain.corner_water_height[index] = height;
+			}
+		});
+		return {{"corners", corners.size()}};
+	}
+
 	nlohmann::json terrain_water(const nlohmann::json& params) {
 		const std::string operation = required<std::string>(params, "operation");
 		if (operation != "add" && operation != "remove") {
 			throw Error(error_code::invalid_params, "operation must be add or remove");
 		}
+		if (operation == "add" && params.contains("height")) {
+			return terrain_water_at_height(loaded_map(), params);
+		}
 		return terrain_cells(params, operation == "add" ? CellOperator::cell_operation::add_water : CellOperator::cell_operation::remove_water);
+	}
+
+	/// Sets the ground tile of every corner in a rectangle at once, as one undo step. tiles is row-major from the bottom
+	/// left corner at x/y; an empty string or null leaves that corner as it is.
+	nlohmann::json terrain_paint_grid(const nlohmann::json& params) {
+		Map& m = loaded_map();
+		Terrain& t = m.terrain;
+		const glm::vec2 start = world_to_internal(m, glm::vec2(required<float>(params, "x"), required<float>(params, "y")));
+		const int x0 = static_cast<int>(std::round(start.x));
+		const int y0 = static_cast<int>(std::round(start.y));
+		const int columns = required<int>(params, "columns");
+		const int rows = required<int>(params, "rows");
+		const nlohmann::json& tiles = required<nlohmann::json>(params, "tiles");
+		if (columns < 1 || rows < 1 || static_cast<int>(tiles.size()) != columns * rows) {
+			throw Error(error_code::invalid_params, "tiles must hold columns * rows entries");
+		}
+		std::unordered_map<std::string, uint8_t> indices;
+		for (size_t i = 0; i < t.tileset_ids.size(); i++) {
+			indices[t.tileset_ids[i]] = static_cast<uint8_t>(i);
+		}
+		for (const auto& tile : tiles) {
+			if (tile.is_string() && !tile.get<std::string>().empty() && !indices.contains(tile.get<std::string>())) {
+				throw Error(error_code::invalid_params, "Tile " + tile.get<std::string>() + " is not in this map's tiles, see terrain.tiles");
+			}
+		}
+
+		const TerrainRect area = TerrainRect(x0, y0, columns, rows).intersected(QRect(0, 0, t.width, t.height));
+		if (area.isEmpty()) {
+			throw Error(error_code::invalid_params, "The grid is outside the map");
+		}
+		int painted = 0;
+		edit_corners(m, area, TerrainUndoType::texture, [&] {
+			for (int row = 0; row < rows; row++) {
+				for (int column = 0; column < columns; column++) {
+					const int i = x0 + column;
+					const int j = y0 + row;
+					const nlohmann::json& tile = tiles[row * columns + column];
+					if (i < 0 || j < 0 || i >= t.width || j >= t.height || !tile.is_string() || tile.get<std::string>().empty()) {
+						continue;
+					}
+					const size_t index = t.ci(i, j);
+					t.corner_ground_texture[index] = indices.at(tile.get<std::string>());
+					t.corner_ground_variation[index] = random_ground_variation();
+					t.corner_blight[index] = false;
+					painted++;
+				}
+			}
+		});
+		return {{"painted", painted}};
 	}
 
 	nlohmann::json terrain_boundary(const nlohmann::json& params) {
@@ -394,6 +555,65 @@ namespace api {
 		};
 	}
 
+	/// Runs a brush action at points every `spacing` units along a polyline, as one undo step
+	nlohmann::json terrain_path(const nlohmann::json& params) {
+		Map& m = loaded_map();
+		static const std::unordered_map<std::string, Method> actions = {
+			{"raise", terrain_raise},
+			{"smooth", terrain_smooth},
+			{"flatten", terrain_flatten},
+			{"paint", terrain_paint},
+			{"cliff", terrain_cliff},
+			{"water", terrain_water},
+			{"boundary", terrain_boundary},
+			{"pathing", pathing_set},
+		};
+		const auto action = actions.find(required<std::string>(params, "action"));
+		if (action == actions.end()) {
+			throw Error(error_code::invalid_params, "action must be raise, smooth, flatten, paint, cliff, water, boundary or pathing");
+		}
+		const auto points = required<std::vector<std::array<float, 2>>>(params, "points");
+		if (points.empty()) {
+			throw Error(error_code::invalid_params, "points needs at least one [x, y]");
+		}
+		const float spacing = std::max(16.f, params.value("spacing", params.value("size", 4) * 128.f / 3.f));
+
+		std::vector<glm::vec2> stops = {glm::vec2(points[0][0], points[0][1])};
+		for (size_t i = 1; i < points.size(); i++) {
+			const glm::vec2 from(points[i - 1][0], points[i - 1][1]);
+			const glm::vec2 to(points[i][0], points[i][1]);
+			const int steps = std::max(1, static_cast<int>(glm::distance(from, to) / spacing));
+			for (int step = 1; step <= steps; step++) {
+				stops.push_back(glm::mix(from, to, static_cast<float>(step) / static_cast<float>(steps)));
+			}
+		}
+		// Brush water takes its level from the first stroke and spreads it, so it starts in the middle
+		if (action->first == "water" && !params.contains("height")) {
+			const size_t middle = stops.size() / 2;
+			std::vector<std::pair<size_t, glm::vec2>> order;
+			for (size_t i = 0; i < stops.size(); i++) {
+				order.emplace_back(i > middle ? i - middle : middle - i, stops[i]);
+			}
+			std::ranges::stable_sort(order, {}, &std::pair<size_t, glm::vec2>::first);
+			for (size_t i = 0; i < order.size(); i++) {
+				stops[i] = order[i].second;
+			}
+		}
+
+		const size_t mark = m.world_undo.group_count();
+		nlohmann::json stroke = params;
+		stroke.erase("action");
+		stroke.erase("points");
+		stroke.erase("spacing");
+		for (const glm::vec2& stop : stops) {
+			stroke["x"] = stop.x;
+			stroke["y"] = stop.y;
+			action->second(stroke);
+		}
+		m.world_undo.merge_groups_since(mark);
+		return {{"strokes", stops.size()}};
+	}
+
 	export std::vector<MethodEntry> terrain_methods() {
 		return {
 			{"terrain.raise", terrain_raise},
@@ -404,6 +624,8 @@ namespace api {
 			{"terrain.water", terrain_water},
 			{"terrain.boundary", terrain_boundary},
 			{"terrain.get", terrain_get},
+			{"terrain.paint_grid", terrain_paint_grid},
+			{"terrain.path", terrain_path},
 			{"terrain.height_at", terrain_height_at},
 			{"terrain.tiles", terrain_tiles},
 			{"terrain.set_tiles", terrain_set_tiles},

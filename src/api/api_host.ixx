@@ -17,6 +17,8 @@ export namespace api {
 		std::function<void()> saving_initiated;
 		/// Renders the map viewport and returns the frame, or a null image when the viewport can't render
 		std::function<QImage()> capture_viewport;
+		/// Renders the map into an offscreen image of this size, also while the window is minimized
+		std::function<QImage(int width, int height)> capture_offscreen;
 		/// Writes pending trigger editor edits into the map and closes it, so it can't overwrite API changes later
 		std::function<void()> close_trigger_editor;
 	};

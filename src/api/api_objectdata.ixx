@@ -202,6 +202,24 @@ namespace api {
 		return {{"total", ids.size()}, {"objects", objects}};
 	}
 
+	/// Searches every kind at once by name or id, for when the kind isn't known (trees are destructibles, for example)
+	nlohmann::json objects_search(const nlohmann::json& params) {
+		const std::string search = required<std::string>(params, "search");
+		const size_t limit = params.value("limit", 60);
+		nlohmann::json results = nlohmann::json::array();
+		for (const char* kind : {"unit", "item", "ability", "doodad", "destructible", "upgrade", "buff"}) {
+			nlohmann::json list = objects_list({{"kind", kind}, {"search", search}, {"limit", limit}});
+			for (auto& object : list["objects"]) {
+				object["kind"] = kind;
+				results.push_back(std::move(object));
+			}
+		}
+		if (results.size() > limit) {
+			results.erase(results.begin() + static_cast<std::ptrdiff_t>(limit), results.end());
+		}
+		return results;
+	}
+
 	/// An object's modified fields, or with "all" every field value, or just the requested "fields"
 	nlohmann::json objects_get(const nlohmann::json& params) {
 		const TableModel& table = table_for(params);
@@ -429,6 +447,7 @@ namespace api {
 	export std::vector<MethodEntry> object_data_methods() {
 		return {
 			{"objects.list", objects_list},
+			{"objects.search", objects_search},
 			{"objects.get", objects_get},
 			{"objects.fields", objects_fields},
 			{"objects.create", objects_create},

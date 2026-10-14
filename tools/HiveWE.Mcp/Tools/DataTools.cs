@@ -12,6 +12,7 @@ public static class DataTools
         Object editor data: the definitions of unit, item, ability, doodad, destructible, upgrade and buff types.
         Every action takes kind (unit, item, ability, doodad, destructible, upgrade, buff).
         - list {kind, search?, custom_only?, limit?}: object ids and names. search matches name or id.
+        - search {search, limit?}: searches every kind at once (no kind needed), e.g. trees are destructibles, not doodads.
         - get {kind, id, fields? [names] | all?}: the modified fields, plus the requested ones or all field values.
         - fields {kind, id, search?}: the editable fields with display name, type, category, level and limits.
         - create {kind, base, id?, name?, fields? {field: value}}: copies a standard object into a new custom one (id generated when omitted).
@@ -26,7 +27,7 @@ public static class DataTools
         [Description("list, get, fields, create, set, reset or delete")] string action,
         [Description("The action's arguments as a JSON object, always with kind")] JsonElement? args = null,
         CancellationToken cancellationToken = default) =>
-        Dispatch.Run(hivewe, "objects", action, ["list", "get", "fields", "create", "set", "reset", "delete"], args, cancellationToken);
+        Dispatch.Run(hivewe, "objects", action, ["list", "search", "get", "fields", "create", "set", "reset", "delete"], args, cancellationToken);
 
     [McpServerTool(Name = "hivewe_gameplay_constants")]
     [Description("""

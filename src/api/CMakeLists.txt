@@ -1,4 +1,6 @@
 find_package(httplib CONFIG REQUIRED)
+# Syntax checks Lua map scripts
+find_package(Lua REQUIRED)
 
 target_sources(HiveWE_lib PUBLIC FILE_SET api_modules TYPE CXX_MODULES FILES
 	"api_error.ixx"
@@ -24,4 +26,5 @@ target_sources(HiveWE_lib PRIVATE
 	"mcp_panel.h"
 )
 
-target_link_libraries(HiveWE_lib PRIVATE httplib::httplib)
+target_include_directories(HiveWE_lib PRIVATE ${LUA_INCLUDE_DIR})
+target_link_libraries(HiveWE_lib PRIVATE httplib::httplib ${LUA_LIBRARIES})

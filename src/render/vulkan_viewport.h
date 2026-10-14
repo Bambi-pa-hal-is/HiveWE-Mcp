@@ -48,6 +48,10 @@ class VulkanViewport : public QWindow {
 	/// Stalls until the GPU has finished the frame.
 	QImage capture();
 
+	/// Renders a frame into an offscreen image of the given size and returns it. Works while the window is minimized or hidden.
+	/// The caller sets the camera's aspect ratio to match. Stalls until the GPU has finished.
+	QImage capture_offscreen(uint32_t width, uint32_t height);
+
   protected:
 	/// Records the frame. The color image is in COLOR_ATTACHMENT_OPTIMAL layout and must stay in it; the depth image is in
 	/// DEPTH_ATTACHMENT_OPTIMAL with undefined contents, so clear it when beginning rendering. The polygon mode is FILL.

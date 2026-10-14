@@ -1,3 +1,7 @@
+module;
+
+#include <lua.hpp>
+
 export module ApiScriptMethods;
 
 import std;
@@ -17,6 +21,18 @@ import <nlohmann/json.hpp>;
 // InitTrig_My_Trigger, which the generated InitCustomTriggers calls. GUI triggers can be read and deleted, not edited.
 
 namespace api {
+	/// Parses Lua without running it. Returns the syntax error, or nothing.
+	std::optional<std::string> lua_syntax_error(const std::string& code, const std::string& chunk_name) {
+		lua_State* state = luaL_newstate();
+		const int result = luaL_loadbufferx(state, code.data(), code.size(), chunk_name.c_str(), "t");
+		std::optional<std::string> error;
+		if (result != LUA_OK) {
+			error = lua_tostring(state, -1);
+		}
+		lua_close(state);
+		return error;
+	}
+
 	std::string script_extension(const Map& m) {
 		return m.info.lua ? "war3map.lua" : "war3map.j";
 	}
@@ -91,12 +107,19 @@ namespace api {
 		};
 	}
 
-	/// Replaces the map header code: the place for libraries, globals and a TypeScript-to-Lua bundle
+	/// Replaces the map header code: the place for libraries, globals and a TypeScript-to-Lua bundle.
+	/// Lua code is syntax checked first.
 	nlohmann::json script_header_set(const nlohmann::json& params) {
 		Map& m = loaded_map();
 		host.close_trigger_editor();
 		if (params.contains("code")) {
-			m.triggers.global_jass = params["code"].get<std::string>();
+			const std::string code = params["code"].get<std::string>();
+			if (m.info.lua) {
+				if (const auto error = lua_syntax_error(code, "map header")) {
+					throw Error(error_code::invalid_params, "Lua syntax error: " + *error);
+				}
+			}
+			m.triggers.global_jass = code;
 		}
 		if (params.contains("comment")) {
 			m.triggers.global_jass_comment = params["comment"].get<std::string>();
@@ -357,7 +380,16 @@ namespace api {
 		if (!result) {
 			return {{"ok", false}, {"errors", result.error()}};
 		}
-		return {{"ok", true}, {"file", (m.filesystem_path / script_extension(m)).string()}};
+		const std::filesystem::path file = m.filesystem_path / script_extension(m);
+		// HiveWE only writes Lua out, so check its syntax here; the line numbers refer to the generated war3map.lua
+		if (m.info.lua) {
+			std::ifstream stream(file, std::ios::binary);
+			const std::string code((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+			if (const auto error = lua_syntax_error(code, "war3map.lua")) {
+				return {{"ok", false}, {"errors", *error}, {"file", file.string()}};
+			}
+		}
+		return {{"ok", true}, {"file", file.string()}};
 	}
 
 	/// The generated war3map.j or war3map.lua from the last save or script.build, optionally a line range

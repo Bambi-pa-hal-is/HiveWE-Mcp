@@ -55,6 +55,13 @@ namespace api {
 			}
 			return widget->viewport->capture();
 		};
+		host.capture_offscreen = [&window](const int width, const int height) {
+			const MapWidget* widget = window.findChild<MapWidget*>();
+			if (widget == nullptr || widget->viewport == nullptr) {
+				return QImage();
+			}
+			return widget->viewport->capture_offscreen(width, height);
+		};
 
 		server = std::make_unique<Server>();
 		for (const auto& methods : {editor_methods(), map_methods(), terrain_methods(), object_methods(), object_data_methods(), map_info_methods(), script_methods(), asset_methods()}) {
